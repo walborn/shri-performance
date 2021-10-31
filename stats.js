@@ -1,27 +1,45 @@
-function quantile(arr, q) {
-    const sorted = arr.sort((a, b) => a - b);
-    const pos = (sorted.length - 1) * q;
-    const base = Math.floor(pos);
-    const rest = pos - base;
+const quantile = (a, q) => {
+  const sorted = [ ...a ].sort((i, j) => i - j)
+  const pos = (sorted.length - 1) * q
+  const [ base, fract ] = [ pos | 0, pos % 1 ]
+  const left = sorted[base]
+  const right = sorted[base + 1] === undefined ? sorted[base] : sorted[base]
 
-    if (sorted[base + 1] !== undefined) {
-        return Math.floor(sorted[base] + rest * (sorted[base + 1] - sorted[base]));
-    } else {
-        return Math.floor(sorted[base]);
-    }
-};
-
-function prepareData(result) {
-	return result.data.map(item => {
-		item.date = item.timestamp.split('T')[0];
-
-		return item;
-	});
+  return left + fract * (right - left)
 }
 
-// TODO: реализовать
-// показать значение метрики за несколько день
-function showMetricByPeriod() {
+export const getMetricsByPeriod = (data, page, metric, from, to) => {
+  from = +new Date(from)
+  to = +new Date(to) + 24 * 60 * 60 * 1000
+  
+  const sampleData = data
+    .filter(item =>
+         item.page === page
+      && item.name === metric
+      && item.date >= from
+      && item.date < to
+    )
+    .map(item => item.value)
+
+  return {
+    hits: sampleData.length,
+    p25: quantile(sampleData, .25),
+    p50: quantile(sampleData, .50),
+    p75: quantile(sampleData, .75),
+    p95: quantile(sampleData, .95),   
+  }
+}
+export const showMetricByPeriod = (data, page, from, to) => {
+	console.log(`All metrics for period ${from} - ${to}:`)
+
+	return {
+    connect: getMetricsByPeriod(data, page, 'connect', from, to),
+    ttfb: getMetricsByPeriod(data, page, 'ttfb', from, to),
+    fcp: getMetricsByPeriod(data, page, 'fcp', from, to),
+    fp: getMetricsByPeriod(data, page, 'fp', from, to),
+    fid: getMetricsByPeriod(data, page, 'fid', from, to),
+    fetchUser: getMetricsByPeriod(data, page, 'onLoadGithubUser', from, to),
+  }
 }
 
 // показать сессию пользователя
@@ -32,48 +50,30 @@ function showSession() {
 function compareMetric() {
 }
 
-// любые другие сценарии, которые считаете полезными
+const getSlice = (data, name) => data
+  .reduce((r, item) => {
+    const key = item.additional[name]
+    return { ...r, [key]: [ ...(r[key] || []), item ] }
+  }, {})
 
+export const showSlice = (name, metric, data, page, from, to) => {
+  console.log(`Metric "${metric}" for period ${from} - ${to} by slice "${name}":`)
 
-// Пример
-// добавить метрику за выбранный день
-function addMetricByDate(data, page, name, date) {
-	let sampleData = data
-					.filter(item => item.page == page && item.name == name && item.date == date)
-					.map(item => item.value);
-
-	let result = {};
-
-	result.hits = sampleData.length;
-	result.p25 = quantile(sampleData, 0.25);
-	result.p50 = quantile(sampleData, 0.5);
-	result.p75 = quantile(sampleData, 0.75);
-	result.p95 = quantile(sampleData, 0.95);
-
-	return result;
+  return Object.entries(getSlice(data, name))
+    .reduce((r, [ key, items ]) => {
+      const metrics = getMetricsByPeriod(items, page, metric, from, to)
+      return { ...r, [key]: metrics }
+    }, {})
 }
-// рассчитывает все метрики за день
-function calcMetricsByDate(data, page, date) {
-	console.log(`All metrics for ${date}:`);
 
-	let table = {};
-	table.connect = addMetricByDate(data, page, 'connect', date);
-	table.ttfb = addMetricByDate(data, page, 'ttfb', date);
-	table.load = addMetricByDate(data, page, 'load', date);
-	table.square = addMetricByDate(data, page, 'square', date);
-	table.load = addMetricByDate(data, page, 'load', date);
-	table.generate = addMetricByDate(data, page, 'generate', date);
-	table.draw = addMetricByDate(data, page, 'draw', date);
+const prepareData = ({ data }) => data
+  .map(item => ({ ...item, date: +new Date(item.timestamp) }))
 
-	console.table(table);
-};
+const res = await fetch(`https://shri.yandex/hw/stat/data?counterId=${process.env.counterId}`)
+const values = prepareData(await res.json())
 
-fetch('https://shri.yandex/hw/stat/data?counterId=D8F28E50-3339-11EC-9EDF-9F93090795B1')
-	.then(res => res.json())
-	.then(result => {
-		let data = prepareData(result);
-
-		calcMetricsByDate(data, 'send test', '2021-10-22');
-
-		// добавить свои сценарии, реализовать функции выше
-	});
+params = new URLSearchParams(window.location.search)
+const from = params.get('from') || new Date(FROM)
+const to = params.get('to') || new Date()
+console.table(showMetricByPeriod(values, page, from, to))
+console.table(showSlice('browser', 'onLoadGithubUser', values, page, from, to))
